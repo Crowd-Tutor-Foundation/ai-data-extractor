@@ -12,7 +12,10 @@ import {
   Download,
   FolderOpen,
   RefreshCw,
+  Archive,
+  CheckCheck,
 } from 'lucide-react';
+import JSZip from 'jszip';
 import { DocumentConversionResult, ConvertedPageResult } from '../../types';
 import { PdfExtractor } from '../../services/pdfExtractor';
 import { DocxBuilder } from '../../services/docxBuilder';
@@ -38,6 +41,7 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
   showStatus,
 }) => {
   const [isProcessingAll, setIsProcessingAll] = useState<boolean>(false);
+  const [isZipping, setIsZipping] = useState<boolean>(false);
   const [processingProgress, setProcessingProgress] = useState<{ current: number; total: number; filename: string } | null>(null);
 
   const handleDrop = (e: React.DragEvent) => {
@@ -62,7 +66,7 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
     e.target.value = '';
   };
 
-  // Run Fast Tier 1 Spatial Conversion on all PDFs
+  // Run Fast Tier 1 Spatial Conversion on all PDFs in batch
   const handleConvertAllPdfs = async () => {
     const pdfs = uploadedFiles.filter((f) => f.type === 'pdf');
     if (pdfs.length === 0) {
@@ -71,7 +75,7 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
     }
 
     setIsProcessingAll(true);
-    showStatus('Running Fast Spatial Multi-Column Extraction...', 'info');
+    showStatus('Running Batch Spatial Multi-Column Extraction...', 'info');
 
     try {
       for (let i = 0; i < pdfs.length; i++) {
@@ -104,14 +108,69 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
         });
       }
 
-      showStatus(`Processed ${pdfs.length} PDF(s) with multi-column reading order!`, 'success');
+      showStatus(`Batch complete! Converted ${pdfs.length} PDF(s) with multi-column reading order.`, 'success');
     } catch (err: any) {
-      showStatus(`PDF Conversion failed: ${err.message}`, 'error');
+      showStatus(`Batch PDF conversion failed: ${err.message}`, 'error');
     } finally {
       setIsProcessingAll(false);
       setProcessingProgress(null);
     }
   };
+
+  // Bulk ZIP Export of all converted Word DOCX manuscripts
+  const handleExportAllZip = async () => {
+    const convertedEntries = Object.values(conversionResults).filter((c) => c.docxBlob);
+    const directDocx = uploadedFiles.filter((f) => f.type === 'docx');
+
+    if (convertedEntries.length === 0 && directDocx.length === 0) {
+      showStatus('No converted DOCX files available to package into ZIP.', 'warning');
+      return;
+    }
+
+    setIsZipping(true);
+    showStatus('Packaging all manuscripts into ZIP archive...', 'info');
+
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder('converted_manuscripts_docx');
+
+      // Add all converted PDF -> DOCX blobs
+      for (const conv of convertedEntries) {
+        if (conv.docxBlob) {
+          const docxName = conv.filename.replace(/\.pdf$/i, '.docx');
+          folder?.file(docxName, conv.docxBlob);
+        }
+      }
+
+      // Add direct DOCX files from IndexedDB
+      for (const d of directDocx) {
+        const fileData = await getManuscriptFile(d.name);
+        if (fileData) {
+          folder?.file(d.name, fileData.data);
+        }
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `manuscripts_docx_batch_${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showStatus(`Successfully exported ZIP containing ${convertedEntries.length + directDocx.length} manuscripts!`, 'success');
+    } catch (err: any) {
+      showStatus(`Failed to generate ZIP archive: ${err.message}`, 'error');
+    } finally {
+      setIsZipping(false);
+    }
+  };
+
+  // Metric aggregates
+  const totalConvertedCount = Object.values(conversionResults).filter((c) => c.docxBlob).length;
+  const needsReviewCount = Object.values(conversionResults).filter((c) => c.status === 'needs_review').length;
+  const cleanCount = Object.values(conversionResults).filter((c) => c.status === 'completed').length;
+  const approvedCount = Object.values(conversionResults).filter((c) => c.approved).length;
 
   return (
     <div className="space-y-4 animate-in fade-in">
@@ -139,7 +198,7 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
 
       {/* Progress Strip */}
       {processingProgress && (
-        <div className="bg-slate-900 border border-indigo-500/40 p-3.5 rounded-xl space-y-2 animate-in fade-in">
+        <div className="bg-slate-900 border border-indigo-500/40 p-3.5 rounded-xl space-y-2 animate-in fade-in shadow-lg">
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold text-indigo-300 flex items-center space-x-2">
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -158,10 +217,32 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
         </div>
       )}
 
-      {/* Manuscripts Table */}
+      {/* Batch Metrics Summary Strip */}
+      {uploadedFiles.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-xl">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Uploads</span>
+            <span className="text-lg font-bold text-slate-100 font-mono">{uploadedFiles.length}</span>
+          </div>
+          <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-xl">
+            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Clean Converted</span>
+            <span className="text-lg font-bold text-emerald-300 font-mono">{cleanCount}</span>
+          </div>
+          <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-xl">
+            <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">Needs QC Review</span>
+            <span className="text-lg font-bold text-amber-300 font-mono">{needsReviewCount}</span>
+          </div>
+          <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-xl">
+            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">Human Approved</span>
+            <span className="text-lg font-bold text-indigo-300 font-mono">{approvedCount}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Manuscripts Table & Actions Toolbar */}
       {uploadedFiles.length > 0 && (
         <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/80 shadow-xl space-y-0">
-          <div className="p-3.5 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between">
+          <div className="p-3.5 bg-slate-900/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center space-x-2">
               <FolderOpen className="h-4 w-4 text-slate-400" />
               <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
@@ -169,14 +250,27 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
               </span>
             </div>
 
-            <button
-              onClick={handleConvertAllPdfs}
-              disabled={isProcessingAll}
-              className="px-3 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow flex items-center space-x-1.5 transition disabled:opacity-50"
-            >
-              {isProcessingAll ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              <span>Convert All PDFs (Spatial Engine)</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              {/* Batch Export ZIP */}
+              <button
+                onClick={handleExportAllZip}
+                disabled={isZipping || totalConvertedCount === 0}
+                className="px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg flex items-center space-x-1.5 transition disabled:opacity-40"
+              >
+                {isZipping ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5 text-amber-400" />}
+                <span>Export All (.zip)</span>
+              </button>
+
+              {/* Batch Convert All PDFs */}
+              <button
+                onClick={handleConvertAllPdfs}
+                disabled={isProcessingAll}
+                className="px-3.5 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow flex items-center space-x-1.5 transition disabled:opacity-50"
+              >
+                {isProcessingAll ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                <span>Batch Convert All PDFs</span>
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto max-h-[480px]">
@@ -187,7 +281,7 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
                   <th className="p-3">Manuscript Filename</th>
                   <th className="p-3 w-24">Type</th>
                   <th className="p-3 w-24">Size</th>
-                  <th className="p-3 w-44">Conversion Status</th>
+                  <th className="p-3 w-48">Conversion Status</th>
                   <th className="p-3 w-36 text-center">Verification</th>
                   <th className="p-3 w-16 text-center">Actions</th>
                 </tr>
@@ -225,11 +319,27 @@ export const ManuscriptManager: React.FC<ManuscriptManagerProps> = ({
                           <div className="space-y-0.5">
                             <span
                               className={`text-[11px] flex items-center space-x-1 font-semibold ${
-                                hasAnomalies ? 'text-amber-400' : 'text-emerald-400'
+                                conv.approved
+                                  ? 'text-indigo-400'
+                                  : hasAnomalies
+                                  ? 'text-amber-400'
+                                  : 'text-emerald-400'
                               }`}
                             >
-                              {hasAnomalies ? <AlertTriangle className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                              <span>{hasAnomalies ? 'Needs QC Review' : 'Spatial Converted'}</span>
+                              {conv.approved ? (
+                                <CheckCheck className="h-3.5 w-3.5 text-indigo-400" />
+                              ) : hasAnomalies ? (
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                              ) : (
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                              )}
+                              <span>
+                                {conv.approved
+                                  ? 'Approved & Verified'
+                                  : hasAnomalies
+                                  ? 'Needs QC Review'
+                                  : 'Spatial Converted'}
+                              </span>
                             </span>
                             <span className="text-[10px] text-slate-500 font-mono block">
                               {conv.totalPages} Pages Extracted
