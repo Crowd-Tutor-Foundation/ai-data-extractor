@@ -37,7 +37,7 @@ The tool employs a two-pass AI methodology:
 
 1.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/JoelWiebe/ai-data-extractor.git](https://github.com/JoelWiebe/ai-data-extractor.git) # Or your repository URL
+    git clone https://github.com/Crowd-Tutor-Foundation/ai-data-extractor.git
     cd ai-data-extractor
     ```
 
@@ -122,7 +122,7 @@ Google Colab provides a free, cloud-based environment that can be suitable for r
         os.makedirs(project_path, exist_ok=True)
         print(f"Project folder created at: {project_path}")
         %cd '/content/drive/My Drive/ai_data_projects/'
-        !git clone https://github.com/JoelWiebe/ai-data-extractor.git
+        !git clone https://github.com/Crowd-Tutor-Foundation/ai-data-extractor.git
         %cd ai-data-extractor
         ```
         This brings all your scripts but not the `codebook.xlsx` or docx files.
